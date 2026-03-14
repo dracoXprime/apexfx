@@ -826,6 +826,8 @@ function checkAgreements(){
     addAgreementSignal(agSig);
   }
 }
+
+function markOutcome(id,outcome){
   const s=state.signals.find(x=>x.id===id);if(s)s.outcome=outcome;
   // Update card
   const card=document.getElementById(`sc-${id}`);
