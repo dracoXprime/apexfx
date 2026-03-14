@@ -52,7 +52,8 @@ class Database:
                 s.get("sl_tight"), s.get("sl_standard", s.get("sl")), s.get("sl_wide"),
                 s["strategy"], s.get("reason",""), s.get("strength","medium"),
                 s.get("risk_reward",0), json.dumps(s.get("indicators",{})),
-                json.dumps(s.get("fib_levels")), json.dumps(s.get("fvg")),
+               json.dumps(s.get("fib_levels")), json.dumps(s.get("fvg")),
+                s.get("timestamp", datetime.now(timezone.utc).isoformat()),
             ))
 
     def update_outcome(self, sig_id: str, outcome: str, note: str = ""):
