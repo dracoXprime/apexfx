@@ -169,7 +169,7 @@ canvas#MC{display:block;width:100%;height:100%}
 .msg.info{background:var(--adim);border:1px solid var(--acc);color:var(--acc);display:block}
 
 /* ── TOAST ── */
-.toasts{position:fixed;bottom:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.toasts{position:fixed;bottom:16px;left:16px;z-index:9999;display:flex;flex-direction:column;gap:6px;pointer-events:none;max-width:240px}
 .toast{background:var(--panel);border:1px solid var(--b2);border-left:3px solid var(--acc);padding:10px 14px;border-radius:3px;font-size:10px;max-width:260px;box-shadow:0 4px 20px rgba(0,0,0,.6);animation:tIn .3s ease;pointer-events:all}
 .toast.buy{border-left-color:var(--buy)}.toast.sell{border-left-color:var(--sell)}.toast.warn{border-left-color:var(--warn)}
 @keyframes tIn{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:translateX(0)}}
@@ -970,9 +970,12 @@ function showMsg(msg,type){const el=document.getElementById('cfg-msg');el.textCo
 
 // ── TOAST ──
 function toast(title,body,type=''){
-  const c=document.getElementById('toasts');const t=document.createElement('div');
+  const c=document.getElementById('toasts');
+  // Remove oldest toast if more than 3 showing
+  while(c.children.length>=3)c.removeChild(c.firstChild);
+  const t=document.createElement('div');
   t.className=`toast ${type}`;t.innerHTML=`<div class="tt">${title}</div><div class="tb">${body}</div>`;
-  c.appendChild(t);setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(16px)';t.style.transition='all .3s';},3500);setTimeout(()=>t.remove(),4000);
+  c.appendChild(t);setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(-16px)';t.style.transition='all .3s';},2500);setTimeout(()=>t.remove(),2900);
 }
 
 // ── MOBILE NAV ──
