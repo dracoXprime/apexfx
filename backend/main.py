@@ -63,33 +63,49 @@ class TestAlert(BaseModel):
     telegram_chat_id: str = ""
 
 # ── Candle close tracker ───────────────────────────────────────────────────
-# Tracks the timestamp of the last candle evaluated per pair/timeframe
-# so we only run strategies when a NEW candle has formed
-_last_candle_ts: dict = {}
+# Tracks the last candle close time we evaluated per pair/timeframe
+_last_evaluated: dict = {}  # key: "pair:tf" -> last close time (datetime)
 
-def _get_candle_close_minutes(tf: str) -> int:
-    """Returns candle duration in minutes."""
-    return {"M15": 15, "H1": 60, "H4": 240}.get(tf, 60)
+TF_MINUTES = {"M15": 15, "H1": 60, "H4": 240}
+
+def _get_last_close_time(tf: str) -> datetime:
+    """
+    Returns the most recent closed candle time for this timeframe.
+    e.g. at 23:41 UTC on H4, the last closed H4 candle was at 20:00 UTC.
+    """
+    now = datetime.now(timezone.utc)
+    mins = TF_MINUTES.get(tf, 60)
+    # Floor to nearest candle boundary
+    total_mins = now.hour * 60 + now.minute
+    floored = (total_mins // mins) * mins
+    from datetime import timedelta
+    close_time = now.replace(hour=floored//60, minute=floored%60, second=0, microsecond=0)
+    return close_time
 
 def _new_candles_available(candles_by_pair: dict) -> dict:
     """
     Returns dict of {pair: [timeframes]} where a new candle has closed
-    since we last evaluated. Only these pair/tf combos should be evaluated.
+    since we last evaluated. Uses time-based detection — reliable regardless
+    of whether the API returned a new timestamp or not.
     """
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
     new = {}
-    for pair, tfs in candles_by_pair.items():
-        for tf, candles in tfs.items():
-            if not candles: continue
-            last_candle = candles[-1]
-            last_ts = last_candle.get("time", "")
+    for tf in ["M15", "H1", "H4"]:
+        last_close = _get_last_close_time(tf)
+        now = datetime.now(timezone.utc)
+        # Only evaluate in the first 2 minutes after a candle close
+        from datetime import timedelta
+        mins_since_close = (now - last_close).total_seconds() / 60
+        if mins_since_close > 2.0:
+            continue  # not close enough to a candle boundary
+        for pair in candles_by_pair:
             key = f"{pair}:{tf}"
-            # Only evaluate if this candle's timestamp is new
-            if _last_candle_ts.get(key) != last_ts:
-                _last_candle_ts[key] = last_ts
-                if pair not in new: new[pair] = []
-                new[pair].append(tf)
+            # Only fire once per candle close — check we haven't already evaluated this close
+            if _last_evaluated.get(key) == last_close:
+                continue
+            _last_evaluated[key] = last_close
+            if pair not in new:
+                new[pair] = []
+            new[pair].append(tf)
     return new
 
 def _filter_conflicts(signals: list) -> list:
@@ -171,27 +187,28 @@ async def main_loop():
 
             # Only run signal detection when markets are open
             if monitoring_state["active"]:
-                # Fetch candles every 60 seconds
+                # Refresh candle data every 60 seconds
                 if tick % 60 == 0:
                     candles = feed.get_all_candles()
+                    # Refresh from Twelve Data if live
+                    if feed.source == "twelve_data":
+                        try:
+                            await feed._fetch_all_candles()
+                            candles = feed.get_all_candles()
+                        except Exception as e:
+                            log.error(f"Candle refresh error: {e}")
 
-                    # Only evaluate pairs/timeframes where a NEW candle has closed
+                    # Check if any candles just closed (time-based detection)
                     new_tf_map = _new_candles_available(candles)
 
                     if new_tf_map:
-                        log.info(f"New candles detected: {new_tf_map}")
-
-                        # Build subset of candles to evaluate
+                        log.info(f"Candle closes detected: {new_tf_map}")
                         candles_to_eval = {
                             pair: {tf: candles[pair][tf] for tf in tfs if tf in candles.get(pair,{})}
                             for pair, tfs in new_tf_map.items()
                         }
-
                         signals, agreements = engine.evaluate(candles_to_eval)
-
-                        # Filter conflicting signals before sending
                         signals = _filter_conflicts(signals)
-
                         configs = db.get_active_configs()
 
                         if signals:
