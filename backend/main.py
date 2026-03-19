@@ -319,7 +319,61 @@ async def test_alert(req: TestAlert):
 
 @app.get("/api/market/status")
 def market_status():
-    return {"market_open": monitoring_state["active"], "ts": datetime.now(timezone.utc).isoformat()}
+    return {
+        "market_open": monitoring_state["active"],
+        "feed": feed.source,
+        "mt5_connected": feed.mt5_connected(),
+        "ts": datetime.now(timezone.utc).isoformat()
+    }
+
+# ── MT5 data push endpoint ─────────────────────────────────────────────────
+class MT5Payload(BaseModel):
+    pair: str
+    tf: str
+    candles: list
+    price: dict = {}
+
+class MT5BatchPayload(BaseModel):
+    data: list
+    secret: str = ""
+
+MT5_SECRET = os.getenv("MT5_SECRET", "apexfx2026")
+
+@app.post("/api/mt5/push")
+async def mt5_push(payload: MT5Payload, secret: str = ""):
+    if secret and secret != MT5_SECRET: return {"status":"error","msg":"unauthorized"}
+    ok = feed.ingest_mt5(payload.dict())
+    return {"status":"ok" if ok else "error"}
+
+@app.post("/api/mt5/batch")
+async def mt5_batch(payload: MT5BatchPayload):
+    if payload.secret and payload.secret != MT5_SECRET:
+        return {"status":"error","msg":"unauthorized"}
+    feed.ingest_mt5_batch(payload.data)
+    # Immediately check for signals on the new data
+    if monitoring_state["active"]:
+        candles = feed.get_all_candles()
+        new_tf_map = _new_candles_available(candles)
+        if new_tf_map:
+            candles_to_eval = {
+                pair: {tf: candles[pair][tf] for tf in tfs if tf in candles.get(pair,{})}
+                for pair, tfs in new_tf_map.items()
+            }
+            signals, agreements = engine.evaluate(candles_to_eval)
+            signals = _filter_conflicts(signals)
+            configs = db.get_active_configs()
+            if signals:
+                for s in signals:
+                    db.save_signal(s)
+                    await dispatch_signal(s, configs)
+                await broadcast({"type":"signals","data":signals,"ts":datetime.now(timezone.utc).isoformat()})
+            if agreements:
+                agreements = _filter_conflicts(agreements)
+                for ag in agreements:
+                    db.save_signal(ag)
+                    await dispatch_agreement(ag)
+                await broadcast({"type":"agreements","data":agreements,"ts":datetime.now(timezone.utc).isoformat()})
+    return {"status":"ok","received":len(payload.data)}
 
 # ── Serve frontend ─────────────────────────────────────────────────────────
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
