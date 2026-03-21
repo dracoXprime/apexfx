@@ -98,6 +98,13 @@ async def receive_mt5(data: MT5Data):
 
     if data.candles:
         store.set_candles(pair, tf, data.candles)
+        # Broadcast candle update so chart refreshes
+        await broadcast({
+            "type":    "candle_update",
+            "pair":    pair,
+            "tf":      tf,
+            "candles": data.candles,
+        })
 
     if data.price:
         mid = float(data.price.get("mid") or data.price.get("ask") or 0)
@@ -140,6 +147,10 @@ def update_outcome(sig_id: str, body: OutcomeUpdate):
 @app.get("/api/signals")
 def get_signals(limit: int = 100):
     return store.get_signals(limit)
+
+@app.get("/api/candles/{pair}/{tf}")
+def get_candles(pair: str, tf: str):
+    return store.get_candles(pair.upper(), tf.upper())
 
 @app.get("/api/stats")
 def get_stats():
