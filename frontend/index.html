@@ -436,6 +436,12 @@ function connectWS(){
       msg.price.change=msg.price.mid-prev;msg.price.change_pct=(msg.price.mid-prev)/prev*100;
       state.prices[msg.pair]=msg.price;updatePairsStrip();if(msg.pair===state.pair)updatePriceHero();setMT5(true);
     }
+    if(msg.type==='candle_update'&&msg.pair&&msg.tf&&msg.candles?.length){
+      if(!state.candles[msg.pair])state.candles[msg.pair]={};
+      state.candles[msg.pair][msg.tf]=msg.candles;
+      if(msg.pair===state.pair&&msg.tf===state.tf){drawChart();updateIndicators();}
+      setMT5(true);
+    }
     if(msg.type==='signals'&&msg.data?.length)msg.data.forEach(addSignal);
     if(msg.type==='scheduler'&&msg.data)addSchMsg(msg.data);
   };
