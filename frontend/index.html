@@ -434,7 +434,10 @@ function connectWS(){
     if(msg.type==='price_update'&&msg.pair&&msg.price&&PAIRS[msg.pair]){
       const prev=state.prices[msg.pair]?.mid||msg.price.mid;
       msg.price.change=msg.price.mid-prev;msg.price.change_pct=(msg.price.mid-prev)/prev*100;
-      state.prices[msg.pair]=msg.price;updatePairsStrip();if(msg.pair===state.pair)updatePriceHero();setMT5(true);
+      state.prices[msg.pair]=msg.price;updatePairsStrip();if(msg.pair===state.pair)updatePriceHero();
+      // Update last candle close price so chart line moves live
+      updateLiveCandle(msg.pair, msg.price.mid);
+      setMT5(true);
     }
     if(msg.type==='candle_update'&&msg.pair&&msg.tf&&msg.candles?.length){
       if(!state.candles[msg.pair])state.candles[msg.pair]={};
@@ -442,7 +445,13 @@ function connectWS(){
       if(msg.pair===state.pair&&msg.tf===state.tf){drawChart();updateIndicators();}
       setMT5(true);
     }
-    if(msg.type==='signals'&&msg.data?.length)msg.data.forEach(addSignal);
+    if(msg.type==='signals'&&msg.data?.length){
+      msg.data.forEach(addSignal);
+      playSignalSound();
+    }
+    if(msg.type==='outcome'&&msg.id){
+      applyAutoOutcome(msg.id, msg.outcome);
+    }
     if(msg.type==='scheduler'&&msg.data)addSchMsg(msg.data);
   };
   ws.onclose=()=>{document.getElementById('conn-dot').className='dot';document.getElementById('conn-label').textContent='RECONNECTING';document.getElementById('conn-label').style.color='var(--dim)';setTimeout(connectWS,3000);};
@@ -450,6 +459,79 @@ function connectWS(){
 }
 
 function updateClock(){document.getElementById('clock').textContent=new Date().toUTCString().split(' ')[4]+' UTC';}
+
+// ── Live chart update on every price tick ──────────────────────────
+function updateLiveCandle(pair, mid){
+  // Update the last candle's close (and high/low) so chart line moves
+  for(const tf of ['M15','H1','H4']){
+    const hist=state.candles[pair]?.[tf];
+    if(hist&&hist.length>0){
+      const last=hist[hist.length-1];
+      last.close=mid;
+      last.high=Math.max(last.high,mid);
+      last.low=Math.min(last.low,mid);
+    }
+  }
+  if(pair===state.pair){drawChart();}
+}
+
+// ── Signal sound notification ──────────────────────────────────────
+let audioCtx=null;
+function playSignalSound(){
+  try{
+    if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+    // Two-tone alert: high beep then low beep
+    const times=[[0,880,0.15],[0.18,660,0.15]];
+    for(const[delay,freq,dur] of times){
+      const osc=audioCtx.createOscillator();
+      const gain=audioCtx.createGain();
+      osc.connect(gain);gain.connect(audioCtx.destination);
+      osc.frequency.value=freq;osc.type='sine';
+      gain.gain.setValueAtTime(0,audioCtx.currentTime+delay);
+      gain.gain.linearRampToValueAtTime(0.3,audioCtx.currentTime+delay+0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+delay+dur);
+      osc.start(audioCtx.currentTime+delay);
+      osc.stop(audioCtx.currentTime+delay+dur+0.05);
+    }
+  }catch(e){}
+}
+
+// ── Auto outcome from backend ──────────────────────────────────────
+function applyAutoOutcome(id, outcome){
+  // Update signal in state
+  const s=state.signals.find(x=>x.id===id);
+  if(s){
+    if(s.outcome==='pending'){
+      s.outcome=outcome;
+      if(outcome==='win')stats.wins++;
+      else if(outcome==='loss')stats.losses++;
+      renderStats();
+    }
+  }
+  // Update card UI
+  const card=document.getElementById(`sc-${id}`);
+  if(card){
+    card.querySelectorAll('.obt').forEach(b=>b.style.opacity='.35');
+    const btn=card.querySelector(`.obt.${outcome}`);
+    if(btn)btn.style.opacity='1';
+    card.style.opacity='0.7';
+    // Add auto badge
+    const foot=card.querySelector('.sfoot');
+    if(foot&&!foot.querySelector('.auto-badge')){
+      const badge=document.createElement('span');
+      badge.className='auto-badge';
+      badge.style.cssText='font-size:7px;padding:1px 5px;border-radius:2px;font-family:var(--mono);font-weight:500;margin-left:6px;'+(outcome==='win'?'background:var(--bdim);color:var(--buy)':'background:var(--sdim);color:var(--sell)');
+      badge.textContent='AUTO '+(outcome==='win'?'✓ WIN':'✗ LOSS');
+      foot.appendChild(badge);
+    }
+  }
+  // Show toast
+  toast(
+    outcome==='win'?'✓ AUTO WIN':'✗ AUTO LOSS',
+    `Signal ${id} — TP${outcome==='win'?'1':'SL'} hit`,
+    outcome==='win'?'buy':'sell'
+  );
+}
 
 document.addEventListener('DOMContentLoaded',()=>{
   buildPairsStrip();initChart();updateClock();
