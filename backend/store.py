@@ -109,6 +109,40 @@ class DataStore:
         except Exception as e:
             log.error(f"save_signal error: {e}")
 
+    def check_outcomes(self, pair: str, current_price: float) -> list:
+        """
+        Check all pending signals for this pair against current price.
+        Automatically marks WIN if TP1 hit, LOSS if SL hit.
+        Returns list of {id, outcome} for signals that just resolved.
+        """
+        resolved = []
+        try:
+            with self._db() as c:
+                rows = c.execute("""
+                    SELECT id, type, tp1, sl_standard
+                    FROM signals
+                    WHERE pair=? AND outcome='pending'
+                    AND tp1 IS NOT NULL AND sl_standard IS NOT NULL
+                """, (pair,)).fetchall()
+
+            for row in rows:
+                sig_id, stype, tp1, sl = row
+                if tp1 is None or sl is None: continue
+                is_buy = "buy" in stype
+
+                hit_tp = current_price >= tp1 if is_buy else current_price <= tp1
+                hit_sl = current_price <= sl  if is_buy else current_price >= sl
+
+                if hit_tp:
+                    self.update_outcome(sig_id, "win")
+                    resolved.append({"id": sig_id, "outcome": "win"})
+                elif hit_sl:
+                    self.update_outcome(sig_id, "loss")
+                    resolved.append({"id": sig_id, "outcome": "loss"})
+        except Exception as e:
+            log.error(f"check_outcomes error: {e}")
+        return resolved
+
     def get_signals(self, limit: int = 100) -> list:
         try:
             with self._db() as c:
