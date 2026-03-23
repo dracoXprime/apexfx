@@ -110,6 +110,17 @@ async def receive_mt5(data: MT5Data):
         mid = float(data.price.get("mid") or data.price.get("ask") or 0)
         if mid > 0:
             store.set_price(pair, mid, data.price)
+            # Check open signals for this pair against current price
+            outcomes = store.check_outcomes(pair, mid)
+            if outcomes:
+                for o in outcomes:
+                    await broadcast({
+                        "type":    "outcome",
+                        "id":      o["id"],
+                        "outcome": o["outcome"],
+                        "price":   mid,
+                    })
+                    log.info(f"Auto outcome: {o['id']} → {o['outcome']} at {mid}")
 
     await broadcast({
         "type":  "price_update",
